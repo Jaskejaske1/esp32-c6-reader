@@ -319,6 +319,7 @@ class SerialReaderClient:
 
             lines = self.read_frame()
             if any(line.startswith("ERR ") for line in lines):
+                print()
                 return lines
 
             if sent < len(payload) and not any(

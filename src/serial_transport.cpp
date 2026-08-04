@@ -36,7 +36,7 @@ void SerialTransport::tick(uint32_t now)
   {
     handleUploadBytes(now);
 
-    if (uploadActive_ && now - lastUploadByteAt_ > UPLOAD_TIMEOUT_MS)
+    if (uploadActive_ && millis() - lastUploadByteAt_ > UPLOAD_TIMEOUT_MS)
     {
       abortUpload("upload timeout");
     }
