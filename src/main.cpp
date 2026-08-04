@@ -4,6 +4,7 @@
 #include <U8g2lib.h>
 #include <Wire.h>
 
+#include "ble_transport.h"
 #include "book_format.h"
 #include "book_store.h"
 #include "buttons.h"
@@ -27,6 +28,7 @@ Button redButton{BTN_RED_DOWN_REJECT};
 ReaderState reader;
 UploadSession uploadSession;
 SerialTransport serialTransport;
+BleTransport bleTransport;
 
 UiMode uiMode = UiMode::Reader;
 uint32_t yellowPressedAt = 0;
@@ -208,7 +210,7 @@ void setup()
     reader.hasBook = readerOpenBook(reader, preferences);
   }
 
-  Serial.println("7: USB serial");
+  Serial.println("7: USB serial & BLE");
   const SerialTransportCallbacks serialCallbacks = {
       &reader,
       &preferences,
@@ -220,6 +222,7 @@ void setup()
       currentUploadStatus,
       setUploadStatus};
   serialTransport.begin(Serial, serialCallbacks);
+  bleTransport.begin(serialCallbacks);
 
   render();
 
@@ -246,6 +249,7 @@ void loop()
   const uint32_t now = millis();
 
   serialTransport.tick(now);
+  bleTransport.tick(now);
   handleReaderButtons(now);
 
   if (uiMode == UiMode::UsbReady && now > usbReadyUntil)

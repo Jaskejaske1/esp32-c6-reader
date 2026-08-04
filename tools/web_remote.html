@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32-C6 RSVP Reader Remote</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-color: #0f172a;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --accent-yellow: #f59e0b;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-blue: #3b82f6;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    body {
+      background: radial-gradient(circle at top, #1e293b 0%, #0f172a 100%);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .title-group h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #f8fafc 0%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--accent-red);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .badge.connected {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-green);
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-blue) 0%, #1d4ed8 100%);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(59, 130, 246, 0.6);
+    }
+
+    .btn-yellow {
+      background: linear-gradient(135deg, var(--accent-yellow) 0%, #d97706 100%);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(245, 158, 11, 0.4);
+    }
+
+    .btn-green {
+      background: linear-gradient(135deg, var(--accent-green) 0%, #059669 100%);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+    }
+
+    .btn-red {
+      background: linear-gradient(135deg, var(--accent-red) 0%, #dc2626 100%);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
+    }
+
+    .btn-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .display-preview {
+      background: #000;
+      border: 2px solid #334155;
+      border-radius: 12px;
+      padding: 16px;
+      font-family: monospace;
+      min-height: 100px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.8);
+    }
+
+    .screen-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: var(--accent-yellow);
+      text-transform: uppercase;
+      font-weight: bold;
+    }
+
+    .screen-word {
+      font-size: 1.8rem;
+      font-weight: bold;
+      text-align: center;
+      color: #fff;
+      letter-spacing: 1px;
+      margin: 10px 0;
+    }
+
+    .screen-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .progress-bar-bg {
+      flex: 1;
+      height: 8px;
+      background: #1e293b;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid #475569;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent-green);
+      transition: width 0.2s ease;
+    }
+
+    .control-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    select, input[type="range"] {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      background: #0f172a;
+      color: var(--text-main);
+      border: 1px solid var(--card-border);
+      outline: none;
+    }
+
+    input[type="range"] {
+      accent-color: var(--accent-blue);
+      cursor: pointer;
+    }
+
+    .book-meta {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    .book-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card header">
+      <div class="title-group">
+        <h1>RSVP Remote</h1>
+        <p style="font-size: 0.8rem; color: var(--text-muted);">ESP32-C6 Web Bluetooth</p>
+      </div>
+      <div id="statusBadge" class="badge">
+        <span class="status-indicator"></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+    </div>
+
+    <button id="connectBtn" class="btn btn-primary">⚡ Connect Device</button>
+
+    <div class="card" style="display: flex; flex-direction: column; gap: 16px;">
+      <div class="book-meta">
+        <div id="bookTitle" class="book-title">No Active Book</div>
+        <div id="bookAuthor">Connect to read metadata</div>
+      </div>
+
+      <div class="display-preview">
+        <div class="screen-header">
+          <span id="screenState">PAUSED</span>
+          <span id="screenWpm">250 WPM</span>
+        </div>
+        <div id="screenWord" class="screen-word">--</div>
+        <div class="screen-footer">
+          <span id="screenChapter">Ch 0/0</span>
+          <div class="progress-bar-bg">
+            <div id="screenProgress" class="progress-bar-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <button id="playPauseBtn" class="btn btn-yellow">▶ Play / Pause</button>
+
+      <div class="btn-group">
+        <button id="wpmDownBtn" class="btn btn-red">-25 WPM</button>
+        <button id="wpmUpBtn" class="btn btn-green">+25 WPM</button>
+      </div>
+    </div>
+
+    <div class="card" style="display: flex; flex-direction: column; gap: 16px;">
+      <h3 style="font-size: 1rem; color: var(--text-main);">🎯 Seek & Navigation</h3>
+      <div class="control-row">
+        <label for="chapterSelect">Jump to Chapter</label>
+        <select id="chapterSelect" disabled>
+          <option value="">Select Chapter...</option>
+        </select>
+      </div>
+
+      <div class="control-row">
+        <label for="wpmRange">Reading Speed: <span id="wpmVal">250</span> WPM</label>
+        <input type="range" id="wpmRange" min="50" max="800" step="25" value="250">
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+    const RX_UUID      = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+    const TX_UUID      = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+    let device, server, rxChar, txChar;
+    let buffer = "";
+
+    const connectBtn = document.getElementById("connectBtn");
+    const statusBadge = document.getElementById("statusBadge");
+    const statusText = document.getElementById("statusText");
+    const playPauseBtn = document.getElementById("playPauseBtn");
+    const wpmDownBtn = document.getElementById("wpmDownBtn");
+    const wpmUpBtn = document.getElementById("wpmUpBtn");
+    const wpmRange = document.getElementById("wpmRange");
+    const wpmVal = document.getElementById("wpmVal");
+    const chapterSelect = document.getElementById("chapterSelect");
+
+    connectBtn.addEventListener("click", async () => {
+      if (device && device.gatt.connected) {
+        device.gatt.disconnect();
+        return;
+      }
+
+      try {
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: "RSVP-Reader" }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        device.addEventListener("gattserverdisconnected", onDisconnected);
+
+        server = await device.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        rxChar = await service.getCharacteristic(RX_UUID);
+        txChar = await service.getCharacteristic(TX_UUID);
+
+        await txChar.startNotifications();
+        txChar.addEventListener("characteristicvaluechanged", handleNotifications);
+
+        statusBadge.classList.add("connected");
+        statusText.textContent = "Connected";
+        connectBtn.textContent = "Disconnect";
+
+        await sendCommand("STATUS\n");
+      } catch (err) {
+        console.error("BLE Connect failed:", err);
+      }
+    });
+
+    function onDisconnected() {
+      statusBadge.classList.remove("connected");
+      statusText.textContent = "Disconnected";
+      connectBtn.textContent = "⚡ Connect Device";
+      chapterSelect.disabled = true;
+    }
+
+    async function sendCommand(cmd) {
+      if (!rxChar) return;
+      const encoder = new TextEncoder();
+      await rxChar.writeValue(encoder.encode(cmd.endsWith("\n") ? cmd : cmd + "\n"));
+    }
+
+    function handleNotifications(event) {
+      const decoder = new TextDecoder("utf-8");
+      buffer += decoder.decode(event.target.value);
+
+      if (buffer.includes("\n.\n")) {
+        parseFrame(buffer);
+        buffer = "";
+      }
+    }
+
+    function parseFrame(frame) {
+      const lines = frame.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("META ")) {
+          const parts = line.substring(5).split("|");
+          document.getElementById("bookTitle").textContent = parts[1] || "Untitled";
+          document.getElementById("bookAuthor").textContent = parts[2] || "Unknown";
+        }
+        if (line.startsWith("STATE ")) {
+          const params = new URLSearchParams(line.substring(6).replace(/;/g, "&"));
+          const isPlaying = params.get("playing") === "1";
+          const wpm = params.get("wpm") || 250;
+          const word = parseInt(params.get("word") || 0);
+          const total = parseInt(params.get("total") || 0);
+          const chap = parseInt(params.get("chapter") || 0);
+          const totalChaps = parseInt(params.get("total_chapters") || 0);
+
+          document.getElementById("screenState").textContent = isPlaying ? "PLAYING" : "PAUSED";
+          document.getElementById("screenWpm").textContent = `${wpm} WPM`;
+          document.getElementById("screenChapter").textContent = `Ch ${chap}/${totalChaps}`;
+          wpmRange.value = wpm;
+          wpmVal.textContent = wpm;
+
+          if (total > 0) {
+            const pct = Math.round((word / total) * 100);
+            document.getElementById("screenProgress").style.width = `${pct}%`;
+          }
+
+          if (totalChaps > 0 && chapterSelect.options.length !== totalChaps + 1) {
+            chapterSelect.innerHTML = '<option value="">Select Chapter...</option>';
+            for (let c = 1; c <= totalChaps; c++) {
+              const opt = document.createElement("option");
+              opt.value = c;
+              opt.textContent = `Chapter ${c}`;
+              if (c === chap) opt.selected = true;
+              chapterSelect.appendChild(opt);
+            }
+            chapterSelect.disabled = false;
+          }
+        }
+      }
+    }
+
+    playPauseBtn.addEventListener("click", () => sendCommand("PLAY"));
+    wpmDownBtn.addEventListener("click", () => sendCommand("WPM:-25"));
+    wpmUpBtn.addEventListener("click", () => sendCommand("WPM:+25"));
+    wpmRange.addEventListener("change", (e) => sendCommand(`WPM:${e.target.value}`));
+    chapterSelect.addEventListener("change", (e) => {
+      if (e.target.value) sendCommand(`SEEK_CHAP ${e.target.value}`);
+    });
+  </script>
+</body>
+</html>
