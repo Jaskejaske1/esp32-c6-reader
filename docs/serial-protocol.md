@@ -16,7 +16,7 @@ outside framed responses:
 
 ```text
 RSVP/1
-STATE playing=0;wpm=250;word=1;total=33
+STATE playing=0;wpm=250;word=1;total=33;chapter=1;total_chapters=1
 UPLOAD idle
 .
 ```

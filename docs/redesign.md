@@ -7,11 +7,13 @@ from a nearby client over USB serial.
 
 ## Product Rules
 
-- Three buttons are the primary interface.
+- Three colored physical buttons are the primary interface for low motoric dexterity.
 - The ESP32-C6 stores exactly one active book.
-- EPUB parsing happens off-device, on a PC or phone.
-- The device reads only the `.rsvp` format.
-- Uploads always go to a temporary file first.
+- EPUB parsing and syllable-based hyphenation happen off-device on a PC or phone.
+- The device reads only the `.rsvp` format (version 2 with Chapter Index Table).
+- Words longer than 10 characters are split into natural hyphenated syllable cards (`weersomst-` -> `andigheden.`).
+- The display shows an ORP focal letter box and per-chapter progress bar (`Ch X/Y`). Numeric word counts are removed to prevent cognitive fatigue.
+- Uploads always go to a temporary file first (`/book.upload`).
 - The active book is replaced only after validation succeeds.
 - USB serial is the v1 transport.
 - Android should reuse the serial protocol over USB OTG first.
@@ -21,9 +23,9 @@ from a nearby client over USB serial.
 ## Buttons
 
 - Yellow short press: play / pause.
-- Yellow hold while paused: show `USB READY`.
-- Green: WPM up.
-- Red: WPM down.
+- Yellow 3-second hold while paused: show `USB READY`.
+- Green: speed up (+25 WPM).
+- Red: speed down (-25 WPM).
 
 ## File Shape
 

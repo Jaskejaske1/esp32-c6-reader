@@ -454,7 +454,15 @@ class RsvpBookFormatTests(unittest.TestCase):
         self.assertIn("UPLOAD <byteCount>", spec)
         self.assertIn("STATUS", spec)
         self.assertIn("WPM:+25", spec)
+        self.assertIn("chapter=1;total_chapters=1", spec)
         self.assertIn("physical cable access is the trust boundary", spec.lower())
+
+    def test_readme_doc_tracks_system_specs(self) -> None:
+        readme = (Path(__file__).parents[2] / "README.md").read_text(encoding="utf-8")
+        self.assertIn("RSVP/1", readme)
+        self.assertIn("STATE playing=0;wpm=250;word=33;total=120000;chapter=3;total_chapters=12", readme)
+        self.assertIn("Ch 3/12", readme)
+        self.assertIn("uv --project tools run rsvp", readme)
 
     def test_wpm_control_accepts_absolute_and_relative_steps(self) -> None:
         self.assertEqual(wpm_control_command("300"), "WPM:300")
