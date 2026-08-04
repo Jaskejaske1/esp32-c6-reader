@@ -27,11 +27,35 @@ void readerBookmark(ReaderState &reader, Preferences &preferences)
   preferences.putUShort("wpm", reader.wpm);
 }
 
+void updateCurrentChapter(ReaderState &reader)
+{
+  if (!reader.hasBook || reader.chapterCount == 0)
+  {
+    reader.currentChapter = 0;
+    reader.chapterStartWord = 0;
+    reader.chapterEndWord = reader.hasBook ? reader.book.wordCount : 0;
+    return;
+  }
+
+  uint16_t chap = 0;
+  while (chap + 1 < reader.chapterCount && reader.chapterStarts[chap + 1] <= reader.currentIndex)
+  {
+    ++chap;
+  }
+
+  reader.currentChapter = chap;
+  reader.chapterStartWord = reader.chapterStarts[chap];
+  reader.chapterEndWord = (chap + 1 < reader.chapterCount)
+                              ? reader.chapterStarts[chap + 1]
+                              : reader.book.wordCount;
+}
+
 void readerResetToFirstWord(ReaderState &reader)
 {
   reader.currentIndex = 0;
-  reader.currentOffset = sizeof(BookHeader);
+  reader.currentOffset = getPayloadOffset(reader.book);
   reader.reachedEnd = false;
+  updateCurrentChapter(reader);
   readerLoadCurrentWord(reader);
 }
 
@@ -45,7 +69,7 @@ bool readerSeekToWord(
     return false;
   }
 
-  uint32_t offset = sizeof(BookHeader);
+  uint32_t offset = getPayloadOffset(reader.book);
   uint32_t after = offset;
   char buffer[WORD_BUFFER_SIZE] = {};
 
@@ -64,6 +88,7 @@ bool readerSeekToWord(
       strncpy(reader.currentWord, buffer, sizeof(reader.currentWord) - 1);
       reader.currentWord[sizeof(reader.currentWord) - 1] = '\0';
       reader.reachedEnd = false;
+      updateCurrentChapter(reader);
       readerBookmark(reader, preferences);
       return true;
     }
@@ -95,6 +120,13 @@ bool readerOpenBook(ReaderState &reader, Preferences &preferences)
 
   reader.hasBook = true;
 
+  loadChapterTable(
+      reader.bookFile,
+      reader.book,
+      reader.chapterStarts,
+      ReaderState::MAX_CHAPTERS,
+      reader.chapterCount);
+
   reader.wpm = preferences.getUShort("wpm", reader.book.defaultWpm);
 
   if (reader.wpm < MIN_WPM || reader.wpm > MAX_WPM)
@@ -102,15 +134,22 @@ bool readerOpenBook(ReaderState &reader, Preferences &preferences)
     reader.wpm = reader.book.defaultWpm;
   }
 
+  const uint32_t payloadStart = getPayloadOffset(reader.book);
+
   if (preferences.getUInt("book", 0) == reader.book.bookId)
   {
     reader.currentIndex = preferences.getUInt("index", 0);
-    reader.currentOffset = preferences.getUInt("offset", sizeof(BookHeader));
+    reader.currentOffset = preferences.getUInt("offset", payloadStart);
 
     if (reader.currentIndex >= reader.book.wordCount ||
+        reader.currentOffset < payloadStart ||
         !readerLoadCurrentWord(reader))
     {
       readerResetToFirstWord(reader);
+    }
+    else
+    {
+      updateCurrentChapter(reader);
     }
   }
   else
@@ -126,8 +165,13 @@ void readerClearBook(ReaderState &reader)
   reader.hasBook = false;
   reader.isReading = false;
   reader.reachedEnd = false;
+  reader.chapterCount = 1;
+  reader.currentChapter = 0;
+  reader.chapterStartWord = 0;
+  reader.chapterEndWord = 0;
   memset(&reader.book, 0, sizeof(reader.book));
   memset(reader.currentWord, 0, sizeof(reader.currentWord));
+  memset(reader.chapterStarts, 0, sizeof(reader.chapterStarts));
 }
 
 uint32_t readerDelayFor(const ReaderState &reader, const char *word)
@@ -165,11 +209,11 @@ uint32_t readerDelayFor(const ReaderState &reader, const char *word)
 
   if (length >= 9)
   {
-    multiplier += 0.20f;
+    multiplier += 0.10f;
   }
   else if (length >= 7)
   {
-    multiplier += 0.10f;
+    multiplier += 0.05f;
   }
 
   const size_t byteLength = strlen(word);
@@ -177,15 +221,16 @@ uint32_t readerDelayFor(const ReaderState &reader, const char *word)
 
   if (last == ',' || last == ';' || last == ':')
   {
+    multiplier += 0.15f;
+  }
+  else if (last == '.' || last == '!' || last == '?')
+  {
     multiplier += 0.35f;
   }
 
-  if (last == '.' || last == '!' || last == '?')
-  {
-    multiplier += 0.85f;
-  }
-
-  return static_cast<uint32_t>(60000.0f / reader.wpm * multiplier);
+  const float targetMs = (60000.0f / reader.wpm) * multiplier;
+  const int32_t netMs = static_cast<int32_t>(targetMs) - 15;
+  return static_cast<uint32_t>(netMs > 15 ? netMs : 15);
 }
 
 void readerSetReading(
@@ -221,6 +266,7 @@ bool readerTick(ReaderState &reader, Preferences &preferences, uint32_t now)
   }
 
   ++reader.currentIndex;
+  updateCurrentChapter(reader);
   reader.currentOffset = reader.nextOffset;
 
   if (!readerLoadCurrentWord(reader))

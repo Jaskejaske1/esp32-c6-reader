@@ -100,8 +100,7 @@ void drawWord(U8G2 &display, const char *word)
       u8g2_font_helvB14_tf,
       u8g2_font_helvB12_tf,
       u8g2_font_helvB10_tf,
-      u8g2_font_6x10_tf,
-      u8g2_font_5x8_tf};
+      u8g2_font_6x10_tf};
 
   for (const uint8_t *font : fonts)
   {
@@ -198,25 +197,37 @@ void renderReader(U8G2 &display, const ReaderState &reader)
 
   display.setFont(u8g2_font_5x7_tf);
 
-  char position[24];
+  char chapStr[16];
   snprintf(
-      position,
-      sizeof(position),
-      "%lu/%lu",
-      static_cast<unsigned long>(reader.currentIndex + 1),
-      static_cast<unsigned long>(reader.book.wordCount));
+      chapStr,
+      sizeof(chapStr),
+      "Ch %u/%u",
+      reader.currentChapter + 1,
+      reader.chapterCount);
 
-  display.setCursor(0, 58);
-  display.print(position);
+  display.setCursor(0, 62);
+  display.print(chapStr);
 
-  display.drawFrame(28, 55, 100, 8);
+  const int textWidth = display.getStrWidth(chapStr);
+  const int barX = textWidth + 4;
+  const int barWidth = 128 - barX;
 
+  display.drawFrame(barX, 55, barWidth, 8);
+
+  const uint32_t chapWords = reader.chapterEndWord > reader.chapterStartWord
+                                 ? (reader.chapterEndWord - reader.chapterStartWord)
+                                 : 1;
+  const uint32_t wordInChap = reader.currentIndex >= reader.chapterStartWord
+                                  ? min(reader.currentIndex - reader.chapterStartWord + 1, chapWords)
+                                  : 1;
+
+  const int maxFill = barWidth - 2;
   const uint8_t fill = static_cast<uint8_t>(
-      ((reader.currentIndex + 1ULL) * 98ULL) / reader.book.wordCount);
+      (static_cast<uint64_t>(wordInChap) * maxFill) / chapWords);
 
-  if (fill)
+  if (fill > 0 && maxFill > 0)
   {
-    display.drawBox(29, 56, fill, 6);
+    display.drawBox(barX + 1, 56, min<uint8_t>(fill, maxFill), 6);
   }
 
   display.sendBuffer();
