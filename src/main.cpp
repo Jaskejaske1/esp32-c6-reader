@@ -1,271 +1,352 @@
 #include <Arduino.h>
-#include <Wire.h>
+#include <LittleFS.h>
+#include <Preferences.h>
 #include <U8g2lib.h>
+#include <Wire.h>
 
-// --- Hardware ---------------------------------------------------------------
-#define I2C_SDA 8
-#define I2C_SCL 10
-#define OLED_ADDRESS 0x3C
+constexpr uint8_t I2C_SDA = 8, I2C_SCL = 10;
+constexpr uint8_t BTN_PLAY_PAUSE = 4, BTN_SPEED_UP = 5, BTN_SPEED_DOWN = 6;
+constexpr uint8_t OLED_ADDRESS = 0x3C;
+constexpr char BOOK_PATH[] = "/book.rsvp";
+constexpr uint16_t BOOK_VERSION = 1, MIN_WPM = 50, MAX_WPM = 800, WPM_STEP = 25;
+constexpr uint8_t WORD_BUFFER_SIZE = 24;
+constexpr uint16_t CHECKPOINT_INTERVAL = 40;
+
+#ifndef RSVP_USB_SERIAL_WAIT_MS
+#define RSVP_USB_SERIAL_WAIT_MS 0
+#endif
+
 U8G2_SSD1309_128X64_NONAME0_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE, OLED_ADDRESS);
+Preferences preferences;
 
-#define BTN_PLAY_PAUSE 4
-#define BTN_SPEED_UP 5
-#define BTN_SPEED_DOWN 6
-
-// Replace this with text received from Serial, SD, Wi-Fi, etc. later.
-const char words[][20] PROGMEM = {
-    "Welcome", "to", "the", "RSVP", "reader", "built", "with", "an",
-    "ESP32-C6", "and", "this", "OLED", "screen.", "Let's", "start",
-    "reading", "quickly,", "one", "word", "at", "a", "time!"};
-constexpr uint16_t TOTAL_WORDS = sizeof(words) / sizeof(words[0]);
-
-// --- Reader state -----------------------------------------------------------
-uint16_t currentIndex = 0;
-uint16_t wpm = 250;
-bool isReading = false;
-uint32_t nextWordAt = 0;
+struct __attribute__((packed)) BookHeader
+{
+  char magic[4];
+  uint16_t version;
+  uint16_t headerSize;
+  uint32_t bookId;
+  uint32_t wordCount;
+  uint32_t payloadBytes;
+  uint16_t defaultWpm;
+  uint16_t flags;
+  char title[48];
+  char author[32];
+  uint32_t payloadCrc32;
+};
+static_assert(sizeof(BookHeader) == 108, "Book header format changed");
 
 struct Button
 {
-    uint8_t pin;
-    bool stable = HIGH;
-    bool previousRaw = HIGH;
-    uint32_t changedAt = 0;
-
-    // Returns true exactly once per physical press.
-    bool pressed()
+  uint8_t pin;
+  bool stable = HIGH, rawPrevious = HIGH;
+  uint32_t changedAt = 0;
+  bool pressed()
+  {
+    const bool raw = digitalRead(pin);
+    const uint32_t now = millis();
+    if (raw != rawPrevious)
     {
-        const bool raw = digitalRead(pin);
-        const uint32_t now = millis();
-
-        if (raw != previousRaw)
-        {
-            previousRaw = raw;
-            changedAt = now;
-        }
-        if ((now - changedAt) >= 30 && raw != stable)
-        {
-            stable = raw;
-            return stable == LOW;
-        }
-        return false;
+      rawPrevious = raw;
+      changedAt = now;
     }
+    if (now - changedAt >= 30 && raw != stable)
+    {
+      stable = raw;
+      return stable == LOW;
+    }
+    return false;
+  }
 };
+Button playButton{BTN_PLAY_PAUSE}, upButton{BTN_SPEED_UP}, downButton{BTN_SPEED_DOWN};
 
-Button playButton{BTN_PLAY_PAUSE};
-Button upButton{BTN_SPEED_UP};
-Button downButton{BTN_SPEED_DOWN};
+File bookFile;
+BookHeader book{};
+bool hasBook = false, isReading = false, reachedEnd = false;
+uint16_t wpm = 250;
+uint32_t currentIndex = 0, currentOffset = 0, nextOffset = 0, nextWordAt = 0;
+char currentWord[WORD_BUFFER_SIZE] = {};
 
-void wordAt(uint16_t index, char *target, size_t targetSize)
+bool validHeader(const BookHeader &header, size_t fileSize)
 {
-    strncpy_P(target, words[index], targetSize - 1);
-    target[targetSize - 1] = '\0';
+  return memcmp(header.magic, "RSVP", 4) == 0 && header.version == BOOK_VERSION &&
+         header.headerSize == sizeof(BookHeader) && header.wordCount > 0 &&
+         header.defaultWpm >= MIN_WPM && header.defaultWpm <= MAX_WPM &&
+         fileSize >= sizeof(BookHeader) + header.payloadBytes;
 }
 
-// RSVP is easier to follow when punctuation and longer words get slightly more
-// time. This is deliberately bounded, so the selected WPM still feels honest.
+bool readWordAt(uint32_t offset, char *out, uint32_t &after)
+{
+  if (!bookFile.seek(offset, SeekSet))
+    return false;
+  const int length = bookFile.read();
+  if (length <= 0 || length >= WORD_BUFFER_SIZE || offset + 1U + length > bookFile.size())
+    return false;
+  if (bookFile.readBytes(out, length) != static_cast<size_t>(length))
+    return false;
+  out[length] = '\0';
+  after = offset + 1U + length;
+  return true;
+}
+
+bool loadCurrentWord() { return readWordAt(currentOffset, currentWord, nextOffset); }
+
+void bookmark()
+{
+  if (!hasBook)
+    return;
+  preferences.putUInt("book", book.bookId);
+  preferences.putUInt("index", currentIndex);
+  preferences.putUInt("offset", currentOffset);
+  preferences.putUShort("wpm", wpm);
+}
+
+void resetToFirstWord()
+{
+  currentIndex = 0;
+  currentOffset = sizeof(BookHeader);
+  reachedEnd = false;
+  loadCurrentWord();
+}
+
+bool openBook()
+{
+  bookFile = LittleFS.open(BOOK_PATH, "r");
+  if (!bookFile || bookFile.size() < sizeof(BookHeader) ||
+      bookFile.readBytes(reinterpret_cast<char *>(&book), sizeof(book)) != sizeof(book) ||
+      !validHeader(book, bookFile.size()))
+  {
+    if (bookFile)
+      bookFile.close();
+    return false;
+  }
+  hasBook = true;
+  wpm = preferences.getUShort("wpm", book.defaultWpm);
+  if (wpm < MIN_WPM || wpm > MAX_WPM)
+    wpm = book.defaultWpm;
+  if (preferences.getUInt("book", 0) == book.bookId)
+  {
+    currentIndex = preferences.getUInt("index", 0);
+    currentOffset = preferences.getUInt("offset", sizeof(BookHeader));
+    if (currentIndex >= book.wordCount || !loadCurrentWord())
+      resetToFirstWord();
+  }
+  else
+    resetToFirstWord();
+  return true;
+}
+
 uint32_t delayFor(const char *word)
 {
-    float multiplier = 1.0f;
-    const size_t length = strlen(word);
-    if (length >= 9)
-        multiplier += 0.20f;
-    else if (length >= 7)
-        multiplier += 0.10f;
-
-    const char last = length ? word[length - 1] : '\0';
-    if (last == ',' || last == ';' || last == ':')
-        multiplier += 0.35f;
-    if (last == '.' || last == '!' || last == '?')
-        multiplier += 0.85f;
-
-    return (uint32_t)(60000.0f / wpm * multiplier);
+  float multiplier = 1.0f;
+  const size_t length = strlen(word);
+  if (length >= 9)
+    multiplier += .20f;
+  else if (length >= 7)
+    multiplier += .10f;
+  const char last = length ? word[length - 1] : '\0';
+  if (last == ',' || last == ';' || last == ':')
+    multiplier += .35f;
+  if (last == '.' || last == '!' || last == '?')
+    multiplier += .85f;
+  return static_cast<uint32_t>(60000.0f / wpm * multiplier);
 }
 
 uint8_t orpIndex(const char *word)
 {
-    // Spritz-like optimal recognition point: slightly left of centre.
-    const uint8_t n = strlen(word);
-    if (n <= 1)
-        return 0;
-    if (n <= 5)
-        return 1;
-    if (n <= 9)
-        return 2;
-    return 3;
+  const uint8_t length = strlen(word);
+  if (length <= 1)
+    return 0;
+  if (length <= 5)
+    return 1;
+  if (length <= 9)
+    return 2;
+  return 3;
 }
-
-void drawPlayIcon(int x, int y)
-{
-    display.drawTriangle(x, y, x, y + 8, x + 7, y + 4);
-}
-
+void drawPlayIcon(int x, int y) { display.drawTriangle(x, y, x, y + 8, x + 7, y + 4); }
 void drawPauseIcon(int x, int y)
 {
-    display.drawBox(x, y, 2, 8);
-    display.drawBox(x + 5, y, 2, 8);
+  display.drawBox(x, y, 2, 8);
+  display.drawBox(x + 5, y, 2, 8);
 }
 
 void drawWord(const char *word)
 {
-    const uint8_t focus = orpIndex(word);
-    char before[20] = {};
-    // `focus` is at most 3 (see orpIndex), so it always fits this buffer.
-    strncpy(before, word, focus);
-    char focusChar[2] = {word[focus], '\0'};
-
-    // Select the largest font whose *actual ORP-positioned bounds* fit. Checking
-    // total width alone is not enough: RSVP intentionally centres the focus
-    // character, which makes the rest of an uneven word extend to one side.
-    const uint8_t *const wordFonts[] = {
-        u8g2_font_helvB14_tf,
-        u8g2_font_helvB12_tf,
-        u8g2_font_helvB10_tf,
-        u8g2_font_6x10_tf,
-        u8g2_font_5x8_tf,
-    };
-    for (const uint8_t *font : wordFonts)
-    {
-        display.setFont(font);
-        const int beforeWidth = display.getStrWidth(before);
-        const int focusWidth = display.getStrWidth(focusChar);
-        const int x = 64 - beforeWidth - focusWidth / 2;
-        const int right = x + display.getStrWidth(word);
-        if (x >= 2 && right <= 126)
-            break; // preserve a 2 px safety margin
-    }
-
-    // Centre the ORP, not the complete word. This keeps the eye at a constant
-    // x-position while words change length.
+  const uint8_t focus = orpIndex(word);
+  char before[WORD_BUFFER_SIZE] = {};
+  strncpy(before, word, focus);
+  char focusChar[2] = {word[focus], '\0'};
+  const uint8_t *const fonts[] = {u8g2_font_helvB14_tf, u8g2_font_helvB12_tf,
+                                  u8g2_font_helvB10_tf, u8g2_font_6x10_tf, u8g2_font_5x8_tf};
+  for (const uint8_t *font : fonts)
+  {
+    display.setFont(font);
     const int beforeWidth = display.getStrWidth(before);
     const int focusWidth = display.getStrWidth(focusChar);
-    const int anchor = 64;
-    const int desiredX = anchor - beforeWidth - focusWidth / 2;
-    const int wordWidth = display.getStrWidth(word);
-    // A pathological very long word can still be too asymmetric at the smallest
-    // font. In that one case, favour showing the complete word over a perfectly
-    // centred ORP.
-    const int x = constrain(desiredX, 2, 126 - wordWidth);
-    // Keep the word vertically centred in the reading area as its font changes.
-    const int y = 34 + (display.getAscent() - display.getDescent()) / 2;
+    const int x = 64 - beforeWidth - focusWidth / 2;
+    if (x >= 2 && x + display.getStrWidth(word) <= 126)
+      break;
+  }
+  const int beforeWidth = display.getStrWidth(before), focusWidth = display.getStrWidth(focusChar);
+  const int width = display.getStrWidth(word), desiredX = 64 - beforeWidth - focusWidth / 2;
+  const int x = constrain(desiredX, 2, 126 - width), y = 34 + (display.getAscent() - display.getDescent()) / 2;
+  display.setCursor(x, y);
+  display.print(word);
+  const int focusX = x + beforeWidth;
+  display.drawBox(focusX, y - display.getAscent() - 1, focusWidth, display.getAscent() - display.getDescent() + 2);
+  display.setDrawColor(0);
+  display.setCursor(focusX, y);
+  display.print(focusChar);
+  display.setDrawColor(1);
+}
 
-    display.setCursor(x, y);
-    display.print(word);
-
-    // The inverse character is the visual fixation point on a monochrome OLED.
-    const int focusX = x + beforeWidth;
-    display.setDrawColor(1);
-    const int focusY = y - display.getAscent() - 1;
-    const int focusHeight = display.getAscent() - display.getDescent() + 2;
-    display.drawBox(focusX, focusY, focusWidth, focusHeight);
-    display.setDrawColor(0);
-    display.setCursor(focusX, y);
-    display.print(focusChar);
-    display.setDrawColor(1);
+void renderEmpty()
+{
+  display.clearBuffer();
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(43, 18, "NO BOOK");
+  display.drawHLine(8, 23, 112);
+  display.setFont(u8g2_font_5x7_tf);
+  display.drawStr(14, 40, "make: data/book.rsvp");
+  display.drawStr(19, 52, "flash: pio uploadfs");
+  display.sendBuffer();
 }
 
 void render()
 {
-    char word[20];
-    wordAt(currentIndex, word, sizeof(word));
-
-    display.clearBuffer();
-    display.setFontMode(1);
-
-    // Header
-    display.setFont(u8g2_font_6x10_tf);
-    display.setCursor(11, 9);
-    display.print(isReading ? "READING" : "PAUSED");
-    if (isReading)
-        drawPauseIcon(1, 1);
-    else
-        drawPlayIcon(1, 1);
-
-    char speed[12];
-    snprintf(speed, sizeof(speed), "%u WPM", wpm);
-    display.setCursor(128 - display.getStrWidth(speed), 9);
-    display.print(speed);
-    display.drawHLine(0, 12, 128);
-
-    drawWord(word);
-
-    // Footer: phrase position and a proper outlined progress bar.
-    display.setFont(u8g2_font_5x7_tf);
-    char position[16];
-    snprintf(position, sizeof(position), "%u/%u", currentIndex + 1, TOTAL_WORDS);
-    display.setCursor(0, 58);
-    display.print(position);
-    display.drawFrame(28, 55, 100, 8);
-    const uint8_t fill = ((currentIndex + 1) * 98UL) / TOTAL_WORDS;
-    if (fill)
-        display.drawBox(29, 56, fill, 6);
-
-    display.sendBuffer();
+  if (!hasBook)
+  {
+    renderEmpty();
+    return;
+  }
+  display.clearBuffer();
+  display.setFontMode(1);
+  display.setFont(u8g2_font_6x10_tf);
+  display.setCursor(11, 9);
+  display.print(isReading ? "READING" : "PAUSED");
+  if (isReading)
+    drawPauseIcon(1, 1);
+  else
+    drawPlayIcon(1, 1);
+  char speed[12];
+  snprintf(speed, sizeof(speed), "%u WPM", wpm);
+  display.setCursor(128 - display.getStrWidth(speed), 9);
+  display.print(speed);
+  display.drawHLine(0, 12, 128);
+  drawWord(currentWord);
+  display.setFont(u8g2_font_5x7_tf);
+  char position[24];
+  snprintf(position, sizeof(position), "%lu/%lu", static_cast<unsigned long>(currentIndex + 1), static_cast<unsigned long>(book.wordCount));
+  display.setCursor(0, 58);
+  display.print(position);
+  display.drawFrame(28, 55, 100, 8);
+  const uint8_t fill = static_cast<uint8_t>(((currentIndex + 1ULL) * 98ULL) / book.wordCount);
+  if (fill)
+    display.drawBox(29, 56, fill, 6);
+  display.sendBuffer();
 }
 
 void setReading(bool reading)
 {
-    isReading = reading;
-    if (isReading)
-    {
-        char word[20];
-        wordAt(currentIndex, word, sizeof(word));
-        nextWordAt = millis() + delayFor(word);
-    }
-    render();
+  isReading = reading;
+  if (isReading)
+    nextWordAt = millis() + delayFor(currentWord);
+  else
+    bookmark();
+  render();
 }
 
 void setup()
 {
-    Serial.begin(115200);
+  Serial.begin(115200);
+  while (!Serial)
+  {
+    delay(10);
+  }
 
-    Wire.begin(I2C_SDA, I2C_SCL);
-    display.begin();
-    display.setPowerSave(0);
+  Serial.println("\n=== RSVP reader boot ===");
 
-    pinMode(BTN_PLAY_PAUSE, INPUT_PULLUP);
-    pinMode(BTN_SPEED_UP, INPUT_PULLUP);
-    pinMode(BTN_SPEED_DOWN, INPUT_PULLUP);
+  Wire.begin(I2C_SDA, I2C_SCL);
+  display.begin();
+  display.setPowerSave(0);
 
-    render();
-    Serial.println("RSVP reader ready: Play/Pause, +WPM, -WPM");
+  pinMode(BTN_PLAY_PAUSE, INPUT_PULLUP);
+  pinMode(BTN_SPEED_UP, INPUT_PULLUP);
+  pinMode(BTN_SPEED_DOWN, INPUT_PULLUP);
+
+  preferences.begin("rsvp", false);
+
+  if (!LittleFS.begin(false, "/littlefs", 10, "spiffs"))
+  {
+    Serial.println("ERROR: LittleFS mount failed");
+  }
+  else
+  {
+    Serial.printf(
+        "LittleFS mounted: %u / %u bytes used\n",
+        LittleFS.usedBytes(),
+        LittleFS.totalBytes());
+    hasBook = openBook();
+  }
+
+  render();
+
+  if (hasBook)
+  {
+    Serial.printf(
+        "Book: %s (%lu words), resuming %lu\n",
+        book.title,
+        static_cast<unsigned long>(book.wordCount),
+        static_cast<unsigned long>(currentIndex + 1));
+  }
+  else
+  {
+    Serial.println("ERROR: /book.rsvp is absent or invalid");
+  }
 }
 
 void loop()
 {
-    if (playButton.pressed())
+  if (playButton.pressed() && hasBook)
+  {
+    if (!isReading && reachedEnd)
+      resetToFirstWord();
+    setReading(!isReading);
+  }
+  if (upButton.pressed() && wpm < MAX_WPM)
+  {
+    wpm = min<uint16_t>(MAX_WPM, wpm + WPM_STEP);
+    bookmark();
+    render();
+  }
+  if (downButton.pressed() && wpm > MIN_WPM)
+  {
+    wpm = max<uint16_t>(MIN_WPM, wpm - WPM_STEP);
+    bookmark();
+    render();
+  }
+  if (isReading && static_cast<int32_t>(millis() - nextWordAt) >= 0)
+  {
+    if (currentIndex + 1 >= book.wordCount)
     {
-        // At the end, starting again begins a new pass.
-        if (!isReading && currentIndex == TOTAL_WORDS - 1)
-            currentIndex = 0;
-        setReading(!isReading);
+      reachedEnd = true;
+      setReading(false);
     }
-
-    if (upButton.pressed() && wpm < 800)
+    else
     {
-        wpm = min<uint16_t>(800, wpm + 25);
+      ++currentIndex;
+      currentOffset = nextOffset;
+      if (!loadCurrentWord())
+      {
+        reachedEnd = true;
+        setReading(false);
+      }
+      else
+      {
+        nextWordAt = millis() + delayFor(currentWord);
+        if (currentIndex % CHECKPOINT_INTERVAL == 0)
+          bookmark();
         render();
+      }
     }
-    if (downButton.pressed() && wpm > 50)
-    {
-        wpm = max<uint16_t>(50, wpm - 25);
-        render();
-    }
-
-    if (isReading && (int32_t)(millis() - nextWordAt) >= 0)
-    {
-        if (++currentIndex >= TOTAL_WORDS)
-        {
-            currentIndex = TOTAL_WORDS - 1; // show the last word while paused
-            setReading(false);
-            Serial.println("Finished reading.");
-        }
-        else
-        {
-            char word[20];
-            wordAt(currentIndex, word, sizeof(word));
-            nextWordAt = millis() + delayFor(word);
-            render();
-        }
-    }
+  }
 }

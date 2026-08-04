@@ -1,0 +1,4 @@
+Welcome to your ESP32 RSVP reader.
+
+This book comes from LittleFS, not from a hardcoded firmware array. Pause now,
+unplug the device, and it will resume at the same word when it restarts.
