@@ -44,7 +44,11 @@ def unpack_header(data: bytes) -> tuple:
 
 
 def payload_words(data: bytes) -> list[str]:
-    payload = data[BOOK_HEADER_SIZE:]
+    header = unpack_header(data)
+    version = header[1]
+    chapter_count = header[7]
+    chapter_table_bytes = (chapter_count * 4) if (version == 2 and chapter_count > 0) else 0
+    payload = data[BOOK_HEADER_SIZE + chapter_table_bytes:]
     words: list[str] = []
     offset = 0
 
@@ -391,11 +395,11 @@ class RsvpBookFormatTests(unittest.TestCase):
 
         words = payload_words(data)
 
-        self.assertEqual(word_count, 14)
+        self.assertEqual(word_count, 15)
         self.assertIn("Café", words)
         self.assertIn("Eén", words)
         self.assertIn("naïef", words)
-        self.assertIn("Smörgåsbord", words)
+        self.assertIn("Smörgås-", words)
         self.assertIn("cliëntèle", words)
 
     def test_tools_package_includes_import_modules(self) -> None:
@@ -431,7 +435,8 @@ class RsvpBookFormatTests(unittest.TestCase):
             book_id=0x12345678,
         )
         fields = unpack_header(data)
-        payload = data[BOOK_HEADER_SIZE:]
+        chapter_table_bytes = (fields[7] * 4) if (fields[1] == 2 and fields[7] > 0) else 0
+        payload = data[BOOK_HEADER_SIZE + chapter_table_bytes:]
 
         self.assertIn(f"wordCount: {word_count}", spec)
         self.assertIn(f"fileBytes: {len(data)}", spec)
