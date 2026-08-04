@@ -40,6 +40,8 @@ PAUSE
 WPM:250
 WPM:+25
 WPM:-25
+SEEK 1500
+SEEK_CHAP 3
 ```
 
 Unknown commands return `ERR unknown command`.

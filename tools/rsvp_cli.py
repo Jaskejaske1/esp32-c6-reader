@@ -525,6 +525,14 @@ def build_parser() -> argparse.ArgumentParser:
     wpm.add_argument("value")
     wpm.set_defaults(func=wpm_command)
 
+    seek = subparsers.add_parser("seek", help="seek to word index")
+    seek.add_argument("index", type=int)
+    seek.set_defaults(func=seek_command)
+
+    seek_chap = subparsers.add_parser("seek-chap", help="seek to chapter (1-based)")
+    seek_chap.add_argument("chapter", type=int)
+    seek_chap.set_defaults(func=seek_chap_command)
+
     inspect = subparsers.add_parser(
         "inspect",
         help="convert and validate a .epub, .txt, or .rsvp book without uploading",
