@@ -139,6 +139,7 @@ void SerialTransport::beginUpload(uint32_t bytes, uint16_t chunkSize)
   uploadActive_ = true;
   uploadAckMode_ = chunkSize > 0;
   uploadChunkSize_ = chunkSize;
+  uploadChunkRemaining_ = uploadAckMode_ ? min<uint32_t>(chunkSize, bytes) : 0;
   uploadRemaining_ = bytes;
   uploadExpectedBytes_ = bytes;
   lastUploadByteAt_ = millis();
@@ -158,17 +159,10 @@ void SerialTransport::handleUploadBytes(uint32_t now)
 
     if (uploadAckMode_)
     {
-      wanted = min<uint32_t>(wanted, uploadChunkSize_);
+      wanted = min<uint32_t>(wanted, uploadChunkRemaining_);
+    }
 
-      if (stream_->available() < wanted)
-      {
-        return;
-      }
-    }
-    else
-    {
-      wanted = min<uint32_t>(wanted, stream_->available());
-    }
+    wanted = min<uint32_t>(wanted, stream_->available());
 
     const size_t read = stream_->readBytes(buffer, wanted);
 
@@ -189,11 +183,16 @@ void SerialTransport::handleUploadBytes(uint32_t now)
     }
 
     uploadRemaining_ -= static_cast<uint32_t>(read);
+    if (uploadAckMode_)
+    {
+      uploadChunkRemaining_ -= static_cast<uint16_t>(read);
+    }
     callbacks_.setUploadStatus(callbacks_.uploadSession->status());
 
-    if (uploadAckMode_ && uploadRemaining_ > 0)
+    if (uploadAckMode_ && uploadRemaining_ > 0 && uploadChunkRemaining_ == 0)
     {
       sendUploadContinueFrame();
+      uploadChunkRemaining_ = min<uint32_t>(uploadChunkSize_, uploadRemaining_);
     }
   }
 
@@ -208,6 +207,7 @@ void SerialTransport::finishUpload()
   uploadActive_ = false;
   uploadAckMode_ = false;
   uploadChunkSize_ = 0;
+  uploadChunkRemaining_ = 0;
   uploadRemaining_ = 0;
   uploadExpectedBytes_ = 0;
 
@@ -235,6 +235,7 @@ void SerialTransport::abortUpload(const char *reason)
   uploadActive_ = false;
   uploadAckMode_ = false;
   uploadChunkSize_ = 0;
+  uploadChunkRemaining_ = 0;
   uploadRemaining_ = 0;
   uploadExpectedBytes_ = 0;
   drainAfterAbort_ = true;

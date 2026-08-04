@@ -42,6 +42,7 @@ private:
   bool drainAfterAbort_ = false;
   bool uploadAckMode_ = false;
   uint16_t uploadChunkSize_ = 0;
+  uint16_t uploadChunkRemaining_ = 0;
   uint32_t uploadRemaining_ = 0;
   uint32_t uploadExpectedBytes_ = 0;
   uint32_t lastUploadByteAt_ = 0;
