@@ -16,7 +16,9 @@ constexpr uint16_t CHECKPOINT_INTERVAL = 40;
 #define RSVP_USB_SERIAL_WAIT_MS 0
 #endif
 
-U8G2_SSD1309_128X64_NONAME0_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE, OLED_ADDRESS);
+U8G2_SSD1309_128X64_NONAME0_F_HW_I2C display(
+    U8G2_R0,
+    U8X8_PIN_NONE);
 Preferences preferences;
 
 struct __attribute__((packed)) BookHeader
@@ -264,16 +266,23 @@ void setup()
 
   Serial.println("\n=== RSVP reader boot ===");
 
+  Serial.println("1: Wire");
   Wire.begin(I2C_SDA, I2C_SCL);
+  Serial.println("2: OLED begin");
+  display.setI2CAddress(OLED_ADDRESS << 1); // U8g2 expects 8-bit I²C address: 0x78
   display.begin();
+  Serial.println("3: OLED power");
   display.setPowerSave(0);
 
+  Serial.println("4: buttons");
   pinMode(BTN_PLAY_PAUSE, INPUT_PULLUP);
   pinMode(BTN_SPEED_UP, INPUT_PULLUP);
   pinMode(BTN_SPEED_DOWN, INPUT_PULLUP);
 
+  Serial.println("5: preferences");
   preferences.begin("rsvp", false);
 
+  Serial.println("6: filesystem");
   if (!LittleFS.begin(false, "/littlefs", 10, "spiffs"))
   {
     Serial.println("ERROR: LittleFS mount failed");
