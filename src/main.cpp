@@ -224,9 +224,9 @@ void render()
   display.setCursor(11, 9);
   display.print(isReading ? "READING" : "PAUSED");
   if (isReading)
-    drawPauseIcon(1, 1);
-  else
     drawPlayIcon(1, 1);
+  else
+    drawPauseIcon(1, 1);
   char speed[12];
   snprintf(speed, sizeof(speed), "%u WPM", wpm);
   display.setCursor(128 - display.getStrWidth(speed), 9);
