@@ -12,16 +12,28 @@ The file starts with a packed 108-byte header:
 | Offset | Size | Field | Rule |
 | ---: | ---: | --- | --- |
 | 0 | 4 | magic | ASCII `RSVP` |
-| 4 | 2 | version | `1` |
+| 4 | 2 | version | `1` or `2` |
 | 6 | 2 | headerSize | `108` |
 | 8 | 4 | bookId | Random nonzero uint32 |
 | 12 | 4 | wordCount | Number of payload records, greater than zero |
-| 16 | 4 | payloadBytes | Bytes after the header |
+| 16 | 4 | payloadBytes | Bytes after header and chapter table |
 | 20 | 2 | defaultWpm | `50..800` |
-| 22 | 2 | flags | `0` for v1 |
+| 22 | 2 | chapterCount | Number of chapters ($C \ge 1$ for v2; 0 or 1 for v1) |
 | 24 | 48 | title | UTF-8, NUL-padded, truncated on character boundary |
 | 72 | 32 | author | UTF-8, NUL-padded, truncated on character boundary |
 | 104 | 4 | payloadCrc32 | CRC-32 of the payload bytes |
+
+## Chapter Table (v2)
+
+If `version == 2` and `chapterCount > 0`, a table of 32-bit unsigned integers immediately follows the header (offset 108):
+
+```text
+[uint32_t chapterStartIndices[chapterCount]]
+```
+
+Each entry is the 0-based word index where that chapter starts. `chapterStartIndices[0]` must be `0`.
+
+The payload stream follows immediately after the chapter table at offset `108 + chapterCount * 4`.
 
 Python `struct` format:
 
@@ -85,9 +97,9 @@ Expected output:
 
 ```text
 wordCount: 3
-fileBytes: 125
+fileBytes: 129
 payloadBytes: 17
 payloadCrc32: 0xf0642562
-sha256: 6f83d3cb006cc267035041c22b28ae1f714673f7a8d3b73adceb4b7b39ac81c5
+sha256: 3c1205b7d148a61e71d2db28133a431b2b7ba502a04cccd56d1dad628a9f6d2f
 payloadHex: 05436166c3a90664c3a96ac3a00376752e
 ```

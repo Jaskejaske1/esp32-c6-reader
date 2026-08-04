@@ -24,11 +24,13 @@ void composeState(char *state, size_t size, const ReaderState &reader)
   snprintf(
       state,
       size,
-      "STATE playing=%u;wpm=%u;word=%lu;total=%lu",
+      "STATE playing=%u;wpm=%u;word=%lu;total=%lu;chapter=%u;total_chapters=%u",
       reader.isReading ? 1 : 0,
       reader.wpm,
       static_cast<unsigned long>(reader.hasBook ? reader.currentIndex + 1 : 0),
-      static_cast<unsigned long>(reader.hasBook ? reader.book.wordCount : 0));
+      static_cast<unsigned long>(reader.hasBook ? reader.book.wordCount : 0),
+      reader.hasBook ? reader.currentChapter + 1 : 0,
+      reader.hasBook ? reader.chapterCount : 0);
 }
 
 void composeStatus(

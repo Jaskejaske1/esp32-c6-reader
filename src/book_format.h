@@ -11,7 +11,7 @@ struct __attribute__((packed)) BookHeader
   uint32_t wordCount;
   uint32_t payloadBytes;
   uint16_t defaultWpm;
-  uint16_t flags;
+  uint16_t chapterCount;
   char title[48];
   char author[32];
   uint32_t payloadCrc32;

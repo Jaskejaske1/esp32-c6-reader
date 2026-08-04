@@ -22,6 +22,7 @@ class EpubDocument:
     title: str
     author: str
     text: str
+    chapters: list[str]
 
 
 class HtmlTextExtractor(HTMLParser):
@@ -149,6 +150,7 @@ def read_epub(path: str) -> EpubDocument:
                 title=title,
                 author=author,
                 text="\n\n".join(chapters),
+                chapters=chapters,
             )
     except BadZipFile as exc:
         raise ValueError("EPUB is not a valid ZIP archive") from exc

@@ -12,5 +12,7 @@ bool readerSeekToWord(ReaderState &reader, Preferences &preferences, uint32_t in
 bool readerOpenBook(ReaderState &reader, Preferences &preferences);
 void readerClearBook(ReaderState &reader);
 uint32_t readerDelayFor(const ReaderState &reader, const char *word);
+void updateCurrentChapter(ReaderState &reader);
 void readerSetReading(ReaderState &reader, Preferences &preferences, bool reading);
 bool readerTick(ReaderState &reader, Preferences &preferences, uint32_t now);
+

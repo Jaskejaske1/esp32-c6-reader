@@ -4,15 +4,23 @@
 
 #include "config.h"
 
+uint32_t getPayloadOffset(const BookHeader &header)
+{
+  const uint32_t chapterTableBytes = (header.version == 2 && header.chapterCount > 0)
+                                          ? (static_cast<uint32_t>(header.chapterCount) * sizeof(uint32_t))
+                                          : 0;
+  return sizeof(BookHeader) + chapterTableBytes;
+}
+
 bool validHeader(const BookHeader &header, size_t fileSize)
 {
   return memcmp(header.magic, "RSVP", 4) == 0 &&
-         header.version == BOOK_VERSION &&
+         (header.version == 1 || header.version == 2) &&
          header.headerSize == sizeof(BookHeader) &&
          header.wordCount > 0 &&
          header.defaultWpm >= MIN_WPM &&
          header.defaultWpm <= MAX_WPM &&
-         fileSize >= sizeof(BookHeader) + header.payloadBytes;
+         fileSize >= getPayloadOffset(header) + header.payloadBytes;
 }
 
 uint32_t crc32Update(uint32_t crc, const uint8_t *data, size_t length)
@@ -46,6 +54,13 @@ bool validateBookFile(const char *path, BookHeader &validatedHeader)
           reinterpret_cast<char *>(&validatedHeader),
           sizeof(validatedHeader)) != sizeof(validatedHeader) ||
       !validHeader(validatedHeader, file.size()))
+  {
+    file.close();
+    return false;
+  }
+
+  const uint32_t payloadStart = getPayloadOffset(validatedHeader);
+  if (!file.seek(payloadStart, SeekSet))
   {
     file.close();
     return false;
@@ -89,6 +104,36 @@ bool validateBookFile(const char *path, BookHeader &validatedHeader)
 
   file.close();
   return valid;
+}
+
+bool loadChapterTable(
+    File &file,
+    const BookHeader &header,
+    uint32_t *tableOut,
+    uint16_t maxChapters,
+    uint16_t &loadedCount)
+{
+  if (header.version == 2 && header.chapterCount > 0)
+  {
+    const uint16_t count = min(header.chapterCount, maxChapters);
+    if (!file.seek(sizeof(BookHeader), SeekSet))
+    {
+      loadedCount = 1;
+      tableOut[0] = 0;
+      return false;
+    }
+
+    const size_t bytesToRead = count * sizeof(uint32_t);
+    if (file.readBytes(reinterpret_cast<char *>(tableOut), bytesToRead) == bytesToRead)
+    {
+      loadedCount = count;
+      return true;
+    }
+  }
+
+  loadedCount = 1;
+  tableOut[0] = 0;
+  return true;
 }
 
 bool installUploadedBook(BookHeader &installedHeader)

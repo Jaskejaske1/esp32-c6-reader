@@ -110,7 +110,7 @@ def validate_rsvp_book(data: bytes) -> tuple[str, str, int]:
         word_count,
         payload_bytes,
         default_wpm,
-        _flags,
+        chapter_count,
         raw_title,
         raw_author,
         payload_crc32,
@@ -118,7 +118,7 @@ def validate_rsvp_book(data: bytes) -> tuple[str, str, int]:
 
     if magic != b"RSVP":
         raise ValueError("bad magic")
-    if version != BOOK_VERSION:
+    if version not in (1, 2):
         raise ValueError(f"unsupported book version: {version}")
     if header_size != BOOK_HEADER_SIZE:
         raise ValueError(f"unexpected header size: {header_size}")
@@ -126,10 +126,12 @@ def validate_rsvp_book(data: bytes) -> tuple[str, str, int]:
         raise ValueError("book has no words")
     if not MIN_WPM <= default_wpm <= MAX_WPM:
         raise ValueError(f"default WPM out of range: {default_wpm}")
-    if len(data) != BOOK_HEADER_SIZE + payload_bytes:
+
+    chapter_table_bytes = (chapter_count * 4) if (version == 2 and chapter_count > 0) else 0
+    if len(data) != BOOK_HEADER_SIZE + chapter_table_bytes + payload_bytes:
         raise ValueError("file size does not match header payload length")
 
-    payload = data[BOOK_HEADER_SIZE:]
+    payload = data[BOOK_HEADER_SIZE + chapter_table_bytes:]
     offset = 0
     words = 0
 
@@ -203,7 +205,7 @@ def build_upload_payload(args: argparse.Namespace) -> UploadPayload:
         title = args.title or epub.title or path.stem.replace("_", " ").title()
         author = args.author if args.author != "Unknown" else epub.author
         payload, word_count = build_book_bytes(
-            epub.text,
+            epub.chapters,
             title=title,
             author=author,
             wpm=args.wpm,
