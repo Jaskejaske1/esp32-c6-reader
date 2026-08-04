@@ -1,2 +1,4 @@
 .pio
 *.epub
+__pycache__/
+*.egg-info/
