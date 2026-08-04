@@ -1,7 +1,17 @@
 [project]
-name = "tools"
+name = "esp32-rsvp-tools"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "bleak>=3.0.2",
+    "pyserial>=3.5",
 ]
+
+[project.scripts]
+rsvp = "rsvp_cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["rsvp_cli", "make_book", "epub_import"]
