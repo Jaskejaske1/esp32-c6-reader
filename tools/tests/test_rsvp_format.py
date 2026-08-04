@@ -98,7 +98,7 @@ class FakeSerialReaderClient:
         self.closed = False
 
     def upload(self, payload: bytes, chunk_size: int) -> list[str]:
-        self.command = f"UPLOAD {len(payload)}"
+        self.command = f"UPLOAD {len(payload)} {chunk_size}"
         self.uploaded = bytes(payload)
         self.chunk_size = chunk_size
         return self.upload_reply
@@ -497,6 +497,9 @@ class RsvpBookFormatTests(unittest.TestCase):
                 b"UPLOAD READY\n",
                 b".\n",
                 b"RSVP/1\n",
+                b"UPLOAD CONT 4/6\n",
+                b".\n",
+                b"RSVP/1\n",
                 b"STATE playing=0;wpm=250;word=1;total=2\n",
                 b"UPLOAD OK:activated\n",
                 b".\n",
@@ -508,7 +511,7 @@ class RsvpBookFormatTests(unittest.TestCase):
 
         self.assertEqual(
             serial.writes,
-            [b"UPLOAD 6\n", b"abcd", b"ef"],
+            [b"UPLOAD 6 4\n", b"abcd", b"ef"],
         )
         self.assertEqual(lines, ["STATE playing=0;wpm=250;word=1;total=2", "UPLOAD OK:activated"])
 
@@ -544,7 +547,7 @@ class RsvpUploadCommandTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertTrue(client.closed)
             self.assertIsNotNone(client.uploaded)
-            self.assertEqual(client.command, f"UPLOAD {len(client.uploaded or b'')}")
+            self.assertEqual(client.command, f"UPLOAD {len(client.uploaded or b'')} 32")
             title, _author, words = validate_rsvp_book(client.uploaded or b"")
             self.assertEqual(title, "Sample")
             self.assertEqual(words, 3)

@@ -46,10 +46,10 @@ Unknown commands return `ERR unknown command`.
 
 ## Upload
 
-Upload sends one line command followed by exact raw bytes:
+Upload sends one line command followed by ACKed raw chunks:
 
 ```text
-UPLOAD <byteCount>
+UPLOAD <byteCount> <chunkSize>
 ```
 
 If the reader accepts the upload, it replies:
@@ -60,9 +60,21 @@ UPLOAD READY
 .
 ```
 
-The client then sends exactly `<byteCount>` bytes containing one complete
-`.rsvp` file. The CLI defaults to 96-byte chunks with a 1 ms delay between
-chunks. Maximum chunk size accepted by the CLI is 240 bytes.
+The client then sends exactly one raw chunk. After each non-final chunk, the
+reader writes it to `/book.upload` and replies:
+
+```text
+RSVP/1
+UPLOAD CONT <written>/<byteCount>
+.
+```
+
+The client must wait for `UPLOAD CONT` before sending the next chunk. The final
+chunk returns the normal metadata/state/upload frame after validation and
+activation. This gives the ESP32-C6 real backpressure while it writes LittleFS.
+
+The CLI defaults to 96-byte chunks with a 1 ms delay between chunks. Maximum
+chunk size accepted by firmware and CLI is 240 bytes.
 
 The reader writes upload bytes to `/book.upload`, never directly to
 `/book.rsvp`. After all bytes arrive, it validates the file and atomically

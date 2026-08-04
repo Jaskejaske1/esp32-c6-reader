@@ -104,7 +104,9 @@ void SerialTransport::handleLine(char *line)
   if (strncmp(line, "UPLOAD ", 7) == 0)
   {
     const uint32_t bytes = strtoul(line + 7, nullptr, 10);
-    beginUpload(bytes);
+    char *next = strchr(line + 7, ' ');
+    const uint16_t chunkSize = next ? strtoul(next + 1, nullptr, 10) : 0;
+    beginUpload(bytes, chunkSize);
     return;
   }
 
@@ -117,8 +119,14 @@ void SerialTransport::handleLine(char *line)
   sendErrorFrame("unknown command");
 }
 
-void SerialTransport::beginUpload(uint32_t bytes)
+void SerialTransport::beginUpload(uint32_t bytes, uint16_t chunkSize)
 {
+  if (chunkSize > MAX_UPLOAD_CHUNK_BYTES)
+  {
+    sendErrorFrame("invalid chunk size");
+    return;
+  }
+
   if (!callbacks_.uploadSession->begin(bytes))
   {
     callbacks_.setUploadStatus(callbacks_.uploadSession->status());
@@ -129,7 +137,10 @@ void SerialTransport::beginUpload(uint32_t bytes)
   callbacks_.stopReading();
   callbacks_.setUploadStatus(callbacks_.uploadSession->status());
   uploadActive_ = true;
+  uploadAckMode_ = chunkSize > 0;
+  uploadChunkSize_ = chunkSize;
   uploadRemaining_ = bytes;
+  uploadExpectedBytes_ = bytes;
   lastUploadByteAt_ = millis();
 
   stream_->println("RSVP/1");
@@ -139,13 +150,26 @@ void SerialTransport::beginUpload(uint32_t bytes)
 
 void SerialTransport::handleUploadBytes(uint32_t now)
 {
-  uint8_t buffer[128];
+  uint8_t buffer[MAX_UPLOAD_CHUNK_BYTES];
 
   while (uploadActive_ && uploadRemaining_ > 0 && stream_->available() > 0)
   {
-    const uint16_t wanted = min<uint32_t>(
-        sizeof(buffer),
-        min<uint32_t>(uploadRemaining_, stream_->available()));
+    uint16_t wanted = min<uint32_t>(sizeof(buffer), uploadRemaining_);
+
+    if (uploadAckMode_)
+    {
+      wanted = min<uint32_t>(wanted, uploadChunkSize_);
+
+      if (stream_->available() < wanted)
+      {
+        return;
+      }
+    }
+    else
+    {
+      wanted = min<uint32_t>(wanted, stream_->available());
+    }
+
     const size_t read = stream_->readBytes(buffer, wanted);
 
     if (read == 0)
@@ -166,6 +190,11 @@ void SerialTransport::handleUploadBytes(uint32_t now)
 
     uploadRemaining_ -= static_cast<uint32_t>(read);
     callbacks_.setUploadStatus(callbacks_.uploadSession->status());
+
+    if (uploadAckMode_ && uploadRemaining_ > 0)
+    {
+      sendUploadContinueFrame();
+    }
   }
 
   if (uploadActive_ && uploadRemaining_ == 0)
@@ -177,6 +206,10 @@ void SerialTransport::handleUploadBytes(uint32_t now)
 void SerialTransport::finishUpload()
 {
   uploadActive_ = false;
+  uploadAckMode_ = false;
+  uploadChunkSize_ = 0;
+  uploadRemaining_ = 0;
+  uploadExpectedBytes_ = 0;
 
   if (!callbacks_.uploadSession->finishWrites())
   {
@@ -200,7 +233,10 @@ void SerialTransport::finishUpload()
 void SerialTransport::abortUpload(const char *reason)
 {
   uploadActive_ = false;
+  uploadAckMode_ = false;
+  uploadChunkSize_ = 0;
   uploadRemaining_ = 0;
+  uploadExpectedBytes_ = 0;
   drainAfterAbort_ = true;
   drainUntil_ = millis() + ABORT_DRAIN_MS;
   lineLength_ = 0;
@@ -215,6 +251,16 @@ void SerialTransport::drainInput()
   {
     stream_->read();
   }
+}
+
+void SerialTransport::sendUploadContinueFrame()
+{
+  stream_->println("RSVP/1");
+  stream_->print("UPLOAD CONT ");
+  stream_->print(static_cast<unsigned long>(uploadExpectedBytes_ - uploadRemaining_));
+  stream_->print("/");
+  stream_->println(static_cast<unsigned long>(uploadExpectedBytes_));
+  stream_->println(".");
 }
 
 void SerialTransport::publishState()

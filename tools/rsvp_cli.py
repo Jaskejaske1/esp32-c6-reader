@@ -300,7 +300,7 @@ class SerialReaderClient:
         return self.read_frame()
 
     def upload(self, payload: bytes, chunk_size: int) -> list[str]:
-        ready = self.request(f"UPLOAD {len(payload)}")
+        ready = self.request(f"UPLOAD {len(payload)} {chunk_size}")
         if not any(line == "UPLOAD READY" for line in ready):
             return ready
 
@@ -309,6 +309,7 @@ class SerialReaderClient:
         while sent < len(payload):
             chunk = payload[sent : sent + chunk_size]
             self.serial.write(chunk)
+            self.serial.flush()
             sent += len(chunk)
             if self.upload_delay:
                 time.sleep(self.upload_delay)
@@ -316,8 +317,19 @@ class SerialReaderClient:
                 print(f"\ruploaded {sent}/{len(payload)} bytes", end="", flush=True)
                 next_progress = sent + UPLOAD_PROGRESS_STEP_BYTES
 
-        self.serial.flush()
-        return self.read_frame()
+            lines = self.read_frame()
+            if any(line.startswith("ERR ") for line in lines):
+                return lines
+
+            if sent < len(payload) and not any(
+                line.startswith("UPLOAD CONT ") for line in lines
+            ):
+                return lines
+
+            if sent == len(payload):
+                return lines
+
+        raise TimeoutError("Upload ended without an RSVP response frame")
 
     def read_frame(self) -> list[str]:
         deadline = time.monotonic() + self.timeout
@@ -527,6 +539,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     upload = subparsers.add_parser("upload", help="upload a .epub, .txt, or .rsvp book")
     add_book_args(upload)
+    upload.add_argument("--timeout", type=float, default=argparse.SUPPRESS)
     upload.add_argument("--chunk-size", type=int, default=DEFAULT_UPLOAD_CHUNK_SIZE)
     upload.add_argument("--upload-delay-ms", type=float, default=DEFAULT_UPLOAD_DELAY_MS)
     upload.set_defaults(func=upload_command)
