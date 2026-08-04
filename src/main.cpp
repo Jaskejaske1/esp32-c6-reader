@@ -258,10 +258,9 @@ void setReading(bool reading)
 void setup()
 {
   Serial.begin(115200);
-  while (!Serial)
-  {
-    delay(10);
-  }
+
+  // Give `pio device monitor` time to attach after an upload reset.
+  delay(1500);
 
   Serial.println("\n=== RSVP reader boot ===");
 
@@ -285,6 +284,7 @@ void setup()
         "LittleFS mounted: %u / %u bytes used\n",
         LittleFS.usedBytes(),
         LittleFS.totalBytes());
+
     hasBook = openBook();
   }
 
